@@ -56,6 +56,22 @@ public sealed class MainForm : Form
 
         web.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
         web.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true;
+        web.CoreWebView2.NavigationCompleted += async (_, e) =>
+        {
+            if (!e.IsSuccess) return;
+            await web.ExecuteScriptAsync("""
+                (() => {
+                  if (!document.getElementById('nexthos-v12-theme')) {
+                    const link = document.createElement('link');
+                    link.id = 'nexthos-v12-theme';
+                    link.rel = 'stylesheet';
+                    link.href = 'theme-v12.css?v=1.5.0';
+                    document.head.appendChild(link);
+                  }
+                  document.documentElement.style.zoom = '1';
+                })();
+                """);
+        };
 
         var webRoot = Path.Combine(AppContext.BaseDirectory, "Web");
         web.CoreWebView2.SetVirtualHostNameToFolderMapping(
