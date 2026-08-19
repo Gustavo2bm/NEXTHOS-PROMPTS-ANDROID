@@ -1,0 +1,33 @@
+name: Build NEXTHOS Windows
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'windows-native/**'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        working-directory: windows-native
+        run: dotnet restore
+
+      - name: Publish Windows x64
+        working-directory: windows-native
+        run: dotnet publish -c Release -r win-x64 --self-contained true
+
+      - name: Upload NEXTHOS EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEXTHOS-PROMPTS-WINDOWS
+          path: windows-native/bin/Release/net8.0-windows/win-x64/publish/**
