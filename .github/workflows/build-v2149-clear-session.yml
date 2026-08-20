@@ -6,6 +6,11 @@ on:
       - v21-4-9-clear-ai-session
     paths:
       - 'windows-native/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'windows-native/**'
 
 jobs:
   build:
