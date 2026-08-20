@@ -1,0 +1,3 @@
+NEXTHOS V22 Mobile responsive build
+Base: desktop V21.2.1
+Android: direct agent links, native file picker, native share, responsive mobile UI
