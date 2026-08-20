@@ -8,14 +8,12 @@ android {
         applicationId 'club.nexthos.prompts'
         minSdk 24
         targetSdk 35
-        versionCode 21
-        versionName '21.0-mobile'
+        versionCode 22
+        versionName '22.0-mobile'
     }
 
     buildTypes {
-        release {
-            minifyEnabled false
-        }
+        release { minifyEnabled false }
     }
 
     compileOptions {
