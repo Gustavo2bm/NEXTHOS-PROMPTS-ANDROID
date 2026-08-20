@@ -1,0 +1,44 @@
+name: Build V21.4.9 Clear AI Session
+
+on:
+  push:
+    branches:
+      - v21-4-9-clear-ai-session
+    paths:
+      - 'windows-native/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'windows-native/**'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore V21.4.9 MainForm
+        shell: powershell
+        run: |
+          $b64 = Get-Content 'windows-native/MainForm.v2149.gz.b64' -Raw
+          [IO.File]::WriteAllBytes('windows-native/MainForm.cs.gz',[Convert]::FromBase64String($b64))
+          $input = [IO.File]::OpenRead('windows-native/MainForm.cs.gz')
+          $gzip = New-Object IO.Compression.GzipStream($input,[IO.Compression.CompressionMode]::Decompress)
+          $output = [IO.File]::Create('windows-native/MainForm.cs')
+          $gzip.CopyTo($output)
+          $output.Close(); $gzip.Close(); $input.Close()
+
+      - name: Publish Windows x64
+        working-directory: windows-native
+        run: dotnet publish -c Release -r win-x64 --self-contained true
+
+      - name: Upload V21.4.9
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEXTHOS-V21-4-9-CLEAR-AI-SESSION
+          path: windows-native/bin/Release/net8.0-windows/win-x64/publish/**
