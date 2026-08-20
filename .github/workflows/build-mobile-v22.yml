@@ -8,6 +8,12 @@ on:
     paths:
       - 'mobile-v22/**'
       - '.github/workflows/build-mobile-v22.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'mobile-v22/**'
+      - '.github/workflows/build-mobile-v22.yml'
 
 jobs:
   build-apk:
