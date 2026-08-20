@@ -5,6 +5,9 @@ on:
   push:
     paths:
       - 'windows-native/**'
+  pull_request:
+    paths:
+      - 'windows-native/**'
 
 permissions:
   contents: write
@@ -63,7 +66,7 @@ jobs:
           path: dist/**
 
       - name: Save diagnostics/build in test branch
-        if: always() && github.ref_name == 'nexthos-v21-4-7-native-overlay'
+        if: always() && github.event_name == 'push' && github.ref_name == 'nexthos-v21-4-7-native-overlay'
         shell: pwsh
         run: |
           git config user.name 'github-actions[bot]'
