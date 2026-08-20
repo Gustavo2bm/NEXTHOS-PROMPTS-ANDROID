@@ -21,30 +21,59 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Prepare diagnostics folder
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path dist | Out-Null
+
       - name: Restore
-        working-directory: windows-native
-        run: dotnet restore
-
-      - name: Publish Windows x64
-        working-directory: windows-native
-        run: dotnet publish -c Release -r win-x64 --self-contained true
-
-      - name: Upload NEXTHOS EXE
-        uses: actions/upload-artifact@v4
-        with:
-          name: NEXTHOS-PROMPTS-WINDOWS
-          path: windows-native/bin/Release/net8.0-windows/win-x64/publish/**
-
-      - name: Save test build in branch
-        if: github.ref_name == 'nexthos-v21-4-7-native-overlay'
+        id: restore
+        continue-on-error: true
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Push-Location windows-native
+          dotnet restore *>&1 | Tee-Object -FilePath ../dist/restore.log
+          $code = $LASTEXITCODE
+          Pop-Location
+          exit $code
+
+      - name: Publish Windows x64
+        id: publish
+        if: steps.restore.outcome == 'success'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Push-Location windows-native
+          dotnet publish -c Release -r win-x64 --self-contained true *>&1 | Tee-Object -FilePath ../dist/publish.log
+          $code = $LASTEXITCODE
+          Pop-Location
+          exit $code
+
+      - name: Collect build when successful
+        if: steps.publish.outcome == 'success'
+        shell: pwsh
+        run: |
           Copy-Item 'windows-native/bin/Release/net8.0-windows/win-x64/publish/NEXTHOS PROMPTS.exe' 'dist/NEXTHOS_V21_4_7_NATIVE_OVERLAY.exe' -Force
           Compress-Archive -Path 'windows-native/bin/Release/net8.0-windows/win-x64/publish/*' -DestinationPath 'dist/NEXTHOS_V21_4_7_NATIVE_OVERLAY_PUBLISH.zip' -Force
+
+      - name: Upload diagnostics and build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEXTHOS-PROMPTS-WINDOWS-DIAGNOSTICS
+          path: dist/**
+
+      - name: Save diagnostics/build in test branch
+        if: always() && github.ref_name == 'nexthos-v21-4-7-native-overlay'
+        shell: pwsh
+        run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add dist
           if (git diff --cached --quiet) { exit 0 }
-          git commit -m 'Save Windows V21.4.7 test build [skip ci]'
+          git commit -m 'Save Windows V21.4.7 build diagnostics [skip ci]'
           git push
+
+      - name: Fail when restore or publish failed
+        if: steps.restore.outcome != 'success' || steps.publish.outcome != 'success'
+        shell: pwsh
+        run: exit 1
