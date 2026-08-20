@@ -31,7 +31,7 @@ public sealed class MainForm : Form
 
         client = new HttpClient(clientHandler)
         {
-            Timeout = TimeSpan.FromSeconds(30)
+            Timeout = TimeSpan.FromSeconds(90)
         };
 
         Shown += async (_, _) => await InitializeAsync();
@@ -56,22 +56,6 @@ public sealed class MainForm : Form
 
         web.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
         web.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true;
-        web.CoreWebView2.NavigationCompleted += async (_, e) =>
-        {
-            if (!e.IsSuccess) return;
-            await web.ExecuteScriptAsync("""
-                (() => {
-                  if (!document.getElementById('nexthos-v12-theme')) {
-                    const link = document.createElement('link');
-                    link.id = 'nexthos-v12-theme';
-                    link.rel = 'stylesheet';
-                    link.href = 'theme-v12.css?v=1.5.0';
-                    document.head.appendChild(link);
-                  }
-                  document.documentElement.style.zoom = '1';
-                })();
-                """);
-        };
 
         var webRoot = Path.Combine(AppContext.BaseDirectory, "Web");
         web.CoreWebView2.SetVirtualHostNameToFolderMapping(
@@ -84,35 +68,67 @@ public sealed class MainForm : Form
 
     private async void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        string? messageType = null;
         try
         {
             using var doc = JsonDocument.Parse(e.WebMessageAsJson);
             var root = doc.RootElement;
+            if (!root.TryGetProperty("type", out var typeElement)) return;
+            messageType = typeElement.GetString();
 
-            if (!root.TryGetProperty("type", out var type) || type.GetString() != "transcribeTikTok") return;
-
-            var tiktokUrl = root.TryGetProperty("url", out var u) ? u.GetString()?.Trim() : null;
-
-            if (string.IsNullOrWhiteSpace(tiktokUrl) ||
-                !Uri.TryCreate(tiktokUrl, UriKind.Absolute, out var uri) ||
-                !(uri.Host.Equals("tiktok.com", StringComparison.OrdinalIgnoreCase) ||
-                  uri.Host.EndsWith(".tiktok.com", StringComparison.OrdinalIgnoreCase)))
+            if (messageType == "transcribeTikTok")
             {
-                await SendErrorAsync("Link do TikTok inválido.");
+                var tiktokUrl = root.TryGetProperty("url", out var u) ? u.GetString()?.Trim() : null;
+                if (string.IsNullOrWhiteSpace(tiktokUrl) ||
+                    !Uri.TryCreate(tiktokUrl, UriKind.Absolute, out var uri) ||
+                    !(uri.Host.Equals("tiktok.com", StringComparison.OrdinalIgnoreCase) ||
+                      uri.Host.EndsWith(".tiktok.com", StringComparison.OrdinalIgnoreCase)))
+                {
+                    await SendTranscriptionErrorAsync("Link do TikTok inválido.");
+                    return;
+                }
+
+                var result = await TranscribeAsync(tiktokUrl);
+                web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
+                {
+                    type = "transcriptionResult",
+                    data = result
+                }));
                 return;
             }
 
-            var result = await TranscribeAsync(tiktokUrl);
-
-            web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
+            if (messageType == "imageToPrompt")
             {
-                type = "transcriptionResult",
-                data = result
-            }));
+                var base64Url = root.TryGetProperty("base64Url", out var b) ? b.GetString() : null;
+                var language = root.TryGetProperty("language", out var l) ? l.GetString() : "en";
+                var imageModelId = root.TryGetProperty("imageModelId", out var model) && model.TryGetInt32(out var modelId) ? modelId : 6;
+
+                if (string.IsNullOrWhiteSpace(base64Url) || !base64Url.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+                {
+                    await SendImagePromptErrorAsync("Imagem inválida. Selecione PNG, JPG ou WEBP.");
+                    return;
+                }
+
+                if (base64Url.Length > 8_500_000)
+                {
+                    await SendImagePromptErrorAsync("Imagem muito grande. Use uma imagem de até 4 MB.");
+                    return;
+                }
+
+                var result = await ImageToPromptAsync(base64Url, imageModelId, string.IsNullOrWhiteSpace(language) ? "en" : language!);
+                web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
+                {
+                    type = "imagePromptResult",
+                    data = result
+                }));
+            }
         }
         catch (Exception ex)
         {
-            await SendErrorAsync(ex.Message);
+            if (messageType == "imageToPrompt")
+                await SendImagePromptErrorAsync(ex.Message);
+            else
+                await SendTranscriptionErrorAsync(ex.Message);
         }
     }
 
@@ -126,11 +142,7 @@ public sealed class MainForm : Form
         };
 
         request.Headers.Host = "submagic-free-tools.fly.dev";
-        request.Headers.Connection.Add("keep-alive");
         request.Headers.Accept.ParseAdd("*/*");
-        request.Headers.AcceptEncoding.ParseAdd("gzip");
-        request.Headers.AcceptEncoding.ParseAdd("deflate");
-        request.Headers.AcceptEncoding.ParseAdd("br");
         request.Headers.AcceptLanguage.ParseAdd("pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
         request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36");
         request.Headers.Referrer = new Uri("https://submagic-free-tools.fly.dev/tiktok-transcription");
@@ -138,10 +150,6 @@ public sealed class MainForm : Form
         request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
         request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "cors");
         request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "empty");
-        request.Headers.TryAddWithoutValidation("Sec-Fetch-Storage-Access", "active");
-        request.Headers.TryAddWithoutValidation("sec-ch-ua-platform", "\"Windows\"");
-        request.Headers.TryAddWithoutValidation("sec-ch-ua", "\"Not=A?Brand\";v=\"99\", \"Google Chrome\";v=\"151\", \"Chromium\";v=\"151\"");
-        request.Headers.TryAddWithoutValidation("sec-ch-ua-mobile", "?0");
 
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead);
         var body = await response.Content.ReadAsStringAsync();
@@ -156,10 +164,64 @@ public sealed class MainForm : Form
         return parsed.RootElement.Clone();
     }
 
-    private Task SendErrorAsync(string message)
+    private async Task<JsonElement> ImageToPromptAsync(string base64Url, int imageModelId, string language)
+    {
+        using var request = new HttpRequestMessage
+        {
+            Method = HttpMethod.Post,
+            RequestUri = new Uri("https://imageprompt.org/api/ai/prompts/image"),
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                base64Url,
+                imageModelId,
+                language
+            }), Encoding.UTF8, "application/json")
+        };
+
+        request.Headers.Host = "imageprompt.org";
+        request.Headers.Accept.ParseAdd("*/*");
+        request.Headers.AcceptLanguage.ParseAdd("pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
+        request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36");
+        request.Headers.Referrer = new Uri("https://imageprompt.org/image-to-prompt");
+        request.Headers.TryAddWithoutValidation("Origin", "https://imageprompt.org");
+        request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
+        request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "cors");
+        request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "empty");
+        request.Headers.TryAddWithoutValidation("sec-ch-ua-platform", "\"Windows\"");
+        request.Headers.TryAddWithoutValidation("sec-ch-ua", "\"Not=A?Brand\";v=\"99\", \"Google Chrome\";v=\"151\", \"Chromium\";v=\"151\"");
+        request.Headers.TryAddWithoutValidation("sec-ch-ua-mobile", "?0");
+
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead);
+        var body = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"ImagePrompt HTTP {(int)response.StatusCode} {response.ReasonPhrase}: {TrimForError(body)}");
+
+        using var parsed = JsonDocument.Parse(body);
+        if (!parsed.RootElement.TryGetProperty("prompt", out var prompt) || prompt.ValueKind != JsonValueKind.String)
+            throw new InvalidOperationException($"A resposta não contém o campo prompt. Resposta: {TrimForError(body)}");
+
+        return parsed.RootElement.Clone();
+    }
+
+    private static string TrimForError(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "resposta vazia";
+        value = value.Replace("\r", " ").Replace("\n", " ");
+        return value.Length <= 700 ? value : value[..700] + "...";
+    }
+
+    private Task SendTranscriptionErrorAsync(string message)
     {
         if (web.CoreWebView2 == null) return Task.CompletedTask;
         web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "transcriptionError", message }));
+        return Task.CompletedTask;
+    }
+
+    private Task SendImagePromptErrorAsync(string message)
+    {
+        if (web.CoreWebView2 == null) return Task.CompletedTask;
+        web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "imagePromptError", message }));
         return Task.CompletedTask;
     }
 
