@@ -4,7 +4,10 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'mobile-release/**'
+      - 'app/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'gradle.properties'
       - '.github/workflows/build-mobile-v20.yml'
 
 jobs:
@@ -26,32 +29,29 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Restore mobile project
-        shell: bash
+      - name: Validate Android project
         run: |
-          set -euo pipefail
-          rm -rf mobile-build
-          mkdir -p mobile-build
-          ZIP='mobile-release/NEXTHOS_PROMPTS_V20_1_MOBILE_ANDROID.zip'
-          # O arquivo foi armazenado no repositório como texto Base64. Decodifica primeiro.
-          tr -d '\r\n ' < "$ZIP" | base64 --decode > /tmp/nexthos-mobile.zip
-          unzip -t /tmp/nexthos-mobile.zip
-          unzip -q /tmp/nexthos-mobile.zip -d mobile-build
-          test -f mobile-build/NEXTHOS_PROMPTS_V20_1_MOBILE_ANDROID/settings.gradle
-          test -f mobile-build/NEXTHOS_PROMPTS_V20_1_MOBILE_ANDROID/app/build.gradle
+          set -e
+          test -f settings.gradle
+          test -f build.gradle
+          test -f app/build.gradle
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/src/main/assets/index.html
+          echo 'Projeto Android encontrado e validado.'
 
       - name: Build debug APK
-        working-directory: mobile-build/NEXTHOS_PROMPTS_V20_1_MOBILE_ANDROID
         run: gradle assembleDebug --no-daemon --stacktrace
 
-      - name: Rename APK
+      - name: Prepare APK
         run: |
+          set -e
           mkdir -p apk-output
-          cp mobile-build/NEXTHOS_PROMPTS_V20_1_MOBILE_ANDROID/app/build/outputs/apk/debug/app-debug.apk 'apk-output/NEXTHOS-PROMPTS-V20.1-MOBILE.apk'
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk 'apk-output/NEXTHOS-PROMPTS-MOBILE.apk'
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NEXTHOS-PROMPTS-V20.1-MOBILE-APK
-          path: apk-output/NEXTHOS-PROMPTS-V20.1-MOBILE.apk
+          name: NEXTHOS-PROMPTS-MOBILE-APK
+          path: apk-output/NEXTHOS-PROMPTS-MOBILE.apk
           if-no-files-found: error
