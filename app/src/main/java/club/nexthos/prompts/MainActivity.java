@@ -2,15 +2,22 @@ package club.nexthos.prompts;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.ClipData;
+import android.content.Intent;
+import android.graphics.Color;
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
 import android.view.Window;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
 
 import org.json.JSONObject;
 
@@ -25,7 +32,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
+    private static final int FILE_CHOOSER_REQUEST = 4401;
     private WebView webView;
+    private ValueCallback<Uri[]> pendingFileCallback;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
@@ -34,7 +43,15 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
 
+        Window window = getWindow();
+        window.setStatusBarColor(Color.rgb(7, 8, 11));
+        window.setNavigationBarColor(Color.rgb(7, 8, 11));
+        if (android.os.Build.VERSION.SDK_INT >= 23) {
+            window.getDecorView().setSystemUiVisibility(0);
+        }
+
         webView = new WebView(this);
+        webView.setBackgroundColor(Color.rgb(7, 8, 11));
         setContentView(webView);
 
         WebSettings s = webView.getSettings();
@@ -48,16 +65,45 @@ public class MainActivity extends Activity {
         s.setDisplayZoomControls(false);
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
-        s.setUserAgentString(s.getUserAgentString() + " NEXTHOS-Mobile/21.0");
+        s.setTextZoom(100);
+        s.setUserAgentString(s.getUserAgentString() + " NEXTHOS-Mobile/22.0");
 
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        webView.setLongClickable(false);
-        webView.setHapticFeedbackEnabled(false);
+        webView.setLongClickable(true);
+        webView.setHapticFeedbackEnabled(true);
         webView.addJavascriptInterface(new AndroidBridge(), "NEXTHOS_ANDROID");
-        webView.setWebChromeClient(new WebChromeClient());
+
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                if (pendingFileCallback != null) pendingFileCallback.onReceiveValue(null);
+                pendingFileCallback = filePathCallback;
+                try {
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("*/*");
+                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, fileChooserParams.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE);
+                    String[] accept = fileChooserParams.getAcceptTypes();
+                    if (accept != null && accept.length > 0) intent.putExtra(Intent.EXTRA_MIME_TYPES, accept);
+                    startActivityForResult(Intent.createChooser(intent, "Selecionar arquivo"), FILE_CHOOSER_REQUEST);
+                    return true;
+                } catch (Exception e) {
+                    pendingFileCallback = null;
+                    Toast.makeText(MainActivity.this, "Não foi possível abrir os arquivos.", Toast.LENGTH_SHORT).show();
+                    return false;
+                }
+            }
+        });
+
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri uri = request.getUrl();
+                String scheme = uri.getScheme();
+                if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                    openExternal(uri.toString());
+                    return true;
+                }
                 return false;
             }
         });
@@ -67,8 +113,39 @@ public class MainActivity extends Activity {
 
     public class AndroidBridge {
         @JavascriptInterface
+        public void openExternal(String url) {
+            runOnUiThread(() -> MainActivity.this.openExternal(url));
+        }
+
+        @JavascriptInterface
+        public void shareLink(String title, String url) {
+            runOnUiThread(() -> {
+                Intent share = new Intent(Intent.ACTION_SEND);
+                share.setType("text/plain");
+                share.putExtra(Intent.EXTRA_SUBJECT, title == null ? "NEXTHOS" : title);
+                share.putExtra(Intent.EXTRA_TEXT, url == null ? "" : url);
+                startActivity(Intent.createChooser(share, "Compartilhar agente"));
+            });
+        }
+
+        @JavascriptInterface
         public void transcribeTikTok(String tiktokUrl) {
             executor.execute(() -> doTranscription(tiktokUrl));
+        }
+    }
+
+    private void openExternal(String rawUrl) {
+        try {
+            Uri uri = Uri.parse(rawUrl);
+            String scheme = uri.getScheme();
+            if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) return;
+            Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+            intent.addCategory(Intent.CATEGORY_BROWSABLE);
+            startActivity(intent);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "Nenhum aplicativo disponível para abrir este link.", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Não foi possível abrir o link.", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -99,10 +176,9 @@ public class MainActivity extends Activity {
             String response = readAll(input);
             if (status < 200 || status >= 300) throw new Exception("Erro HTTP " + status + ": " + response);
 
-            JSONObject parsed = new JSONObject(response);
             JSONObject message = new JSONObject();
             message.put("type", "transcriptionResult");
-            message.put("data", parsed);
+            message.put("data", new JSONObject(response));
             sendToJs(message);
         } catch (Exception e) {
             try {
@@ -110,7 +186,7 @@ public class MainActivity extends Activity {
                 message.put("type", "transcriptionError");
                 message.put("message", e.getMessage() == null ? "Erro na transcrição" : e.getMessage());
                 sendToJs(message);
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) { }
         } finally {
             if (conn != null) conn.disconnect();
         }
@@ -128,19 +204,35 @@ public class MainActivity extends Activity {
 
     private void sendToJs(JSONObject message) {
         final String raw = JSONObject.quote(message.toString());
-        runOnUiThread(() -> webView.evaluateJavascript("window.__nexthosAndroidMessage(" + raw + ");", null));
+        runOnUiThread(() -> {
+            if (webView != null) webView.evaluateJavascript("window.__nexthosAndroidMessage(" + raw + ");", null);
+        });
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != FILE_CHOOSER_REQUEST || pendingFileCallback == null) return;
+        Uri[] results = null;
+        if (resultCode == RESULT_OK && data != null) {
+            ClipData clip = data.getClipData();
+            if (clip != null) {
+                results = new Uri[clip.getItemCount()];
+                for (int i = 0; i < clip.getItemCount(); i++) results[i] = clip.getItemAt(i).getUri();
+            } else if (data.getData() != null) {
+                results = new Uri[]{data.getData()};
+            }
+        }
+        pendingFileCallback.onReceiveValue(results);
+        pendingFileCallback = null;
     }
 
     @Override
     public void onBackPressed() {
-        webView.evaluateJavascript("document.getElementById('promptDrawer')?.classList.contains('open')", value -> {
-            if ("true".equals(value)) {
-                webView.evaluateJavascript("document.getElementById('drawerClose')?.click()", null);
-            } else if (webView.canGoBack()) {
-                webView.goBack();
-            } else {
-                MainActivity.super.onBackPressed();
-            }
+        if (webView == null) { super.onBackPressed(); return; }
+        webView.evaluateJavascript("window.__nexthosAndroidBack ? window.__nexthosAndroidBack() : false", value -> {
+            if ("true".equals(value)) return;
+            if (webView.canGoBack()) webView.goBack(); else MainActivity.super.onBackPressed();
         });
     }
 
@@ -148,6 +240,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         executor.shutdownNow();
         if (webView != null) {
+            webView.removeJavascriptInterface("NEXTHOS_ANDROID");
             webView.destroy();
             webView = null;
         }
