@@ -6,6 +6,9 @@ on:
     paths:
       - 'windows-native/**'
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -31,3 +34,17 @@ jobs:
         with:
           name: NEXTHOS-PROMPTS-WINDOWS
           path: windows-native/bin/Release/net8.0-windows/win-x64/publish/**
+
+      - name: Save test build in branch
+        if: github.ref_name == 'nexthos-v21-4-7-native-overlay'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item 'windows-native/bin/Release/net8.0-windows/win-x64/publish/NEXTHOS PROMPTS.exe' 'dist/NEXTHOS_V21_4_7_NATIVE_OVERLAY.exe' -Force
+          Compress-Archive -Path 'windows-native/bin/Release/net8.0-windows/win-x64/publish/*' -DestinationPath 'dist/NEXTHOS_V21_4_7_NATIVE_OVERLAY_PUBLISH.zip' -Force
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add dist
+          if (git diff --cached --quiet) { exit 0 }
+          git commit -m 'Save Windows V21.4.7 test build [skip ci]'
+          git push
