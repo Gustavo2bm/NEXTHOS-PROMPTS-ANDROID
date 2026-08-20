@@ -2,17 +2,17 @@ name: Build NEXTHOS V22 Mobile APK
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - mobile-v22-responsive
-    paths:
-      - 'mobile-v22/**'
-      - '.github/workflows/build-mobile-v22.yml'
   pull_request:
     branches:
       - main
+  push:
+    branches:
+      - v22-apk-direct
     paths:
-      - 'mobile-v22/**'
+      - 'app/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'gradle.properties'
       - '.github/workflows/build-mobile-v22.yml'
 
 jobs:
@@ -21,39 +21,30 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
       - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-
-      - name: Restaurar fonte V22 Mobile
+      - name: Validar projeto Android V22
         run: |
           set -e
-          base64 -d mobile-v22/source.b64 > /tmp/nexthos-v22.tar.gz
-          tar -xzf /tmp/nexthos-v22.tar.gz
+          test -f app/src/main/AndroidManifest.xml
           test -f app/src/main/assets/index.html
-          test -f app/src/main/assets/assets/nexthos-logo.png
           test -f app/src/main/java/club/nexthos/prompts/MainActivity.java
           grep -q 'NEXTHOS V22' app/src/main/assets/index.html
           grep -q 'openExternal' app/src/main/java/club/nexthos/prompts/MainActivity.java
-
       - name: Compilar APK V22
         run: gradle assembleDebug --no-daemon --stacktrace
-
       - name: Preparar APK
         run: |
-          set -e
           mkdir -p apk-output
           test -f app/build/outputs/apk/debug/app-debug.apk
           cp app/build/outputs/apk/debug/app-debug.apk apk-output/NEXTHOS-PROMPTS-V22-MOBILE.apk
-
       - name: Enviar APK
         uses: actions/upload-artifact@v4
         with:
